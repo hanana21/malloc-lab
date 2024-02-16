@@ -70,11 +70,70 @@ team_t team = {
 #define PREV_BLKP(bp) ((char*)(bp) - GET_SIZE(((char*)(bp)-DSIZE)))
 
 
+static void *coalesce(void *bp){
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+    size_t size = GET_SIZE(HDRP(bp));
+
+    //case 1
+    if(prev_alloc && next_alloc){
+        return bp;
+    }
+    //case 2 
+    else if(prev_alloc && !next_alloc){
+        size+=GET_SIZE(HDRP(NEXT_BLKP(bp)));
+        PUT(HDRP(bp),PACK(size,0));
+        PUT(FTRP(bp),PACK(size,0));
+    }
+    //case 3
+    else if(!prev_alloc && next_alloc){
+        size+=GET_SIZE(HDRP(PREV_BLKP(bp)));
+        PUT(FTRP(bp),PACK(size,0));
+        PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
+        bp = PREV_BLKP(bp);
+    }
+    //case 4
+    else{
+        size+=GET_SIZE(HDRP(PREV_BLKP(bp)))+GET_SIZE(FTRP(NEXT_BLKP(bp)));
+        PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
+        PUT(FTRP(NEXT_BLKP(bp)),PACK(size,0));
+        bp = PREV_BLKP(bp);
+    }
+    return bp;
+}
+
+static void *extern_heap(size_t words){
+    char *bp;
+    size_t size;
+    
+    //allocate an even number of words to maintain alignment
+    size = (words % 2)? (words+1) * WSIZE : words * WSIZE;
+    if((long)(bp = mem_sbrk(size)) == -1) return NULL;
+
+    //Initialize free block header/footer and the epilogue header
+    PUT(HDRP(bp), PACK(size,0));
+    PUT(FTRP(bp), PACK(size,0));
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0,1));
+
+    //Coalesce if the previous block was free 
+    return coalesce(bp);
+}
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {
+    // create the initial empty heap
+    static char *heap_listp;
+    if(heap_listp = mem_sbrk(4*WSIZE) == (void*)-1) return -1;
+    PUT(heap_listp,0);
+    PUT(heap_listp + WSIZE, PACK(DSIZE,1));
+    PUT(heap_listp + 2 * WSIZE,PACK(DSIZE,1));
+    PUT(heap_listp + 3 * WSIZE,PACK(0,1));
+    heap_listp += 2 * WSIZE;
+
+    // extend the empty heap with a free block of CHUNKSIZE bytes
+    if(extend_heap(CHUNKSIZE/WSIZE) == NULL) return -1;
     return 0;
 }
 
@@ -99,6 +158,10 @@ void *mm_malloc(size_t size)
  */
 void mm_free(void *ptr)
 {
+    size_t size = GET_SIZE(HDRP(ptr));
+    PUT(HDRP(ptr), PACK(size,0));
+    PUT(FTRP(ptr), PACK(size,0));
+    coalesce(ptr);
 }
 
 /*
