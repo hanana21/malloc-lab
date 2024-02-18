@@ -69,21 +69,135 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char*)(bp) + GET_SIZE(((char*)(bp)-WSIZE)))
 #define PREV_BLKP(bp) ((char*)(bp) - GET_SIZE(((char*)(bp)-DSIZE)))
 
+#define GET_PRED(bp) (*(void**)(bp))
+#define GET_SUCC(bp) (*(void**)((char*)(bp+WSIZE)))
+
+static char *free_listp;
+
+static void splice_free_block(void* bp){
+    if(bp == free_listp){
+        free_listp = GET_SUCC(free_listp);
+        return;
+    }// 이거 왱?
+    GET_SUCC(GET_PRED(bp)) = GET_SUCC(bp);
+    if(GET_SUCC(bp)!= NULL)
+        GET_PRED(GET_SUCC(bp)) = GET_PRED(bp);
+}
+static void add_free_block(void* bp){
+    //////////////LIFO///////////////
+    // GET_SUCC(bp) = free_listp;
+    // if(free_listp!=NULL)
+    //     GET_PRED(free_listp) = bp;
+    // free_listp = bp;
+    /////////////////////////////////
+
+    /////////////주소정책/////////////
+    void *cur = free_listp;
+    if(cur == NULL){ //아무것도 없었던 상태
+        free_listp = bp;
+        GET_SUCC(bp) = NULL;
+        return;
+    }
+    while(cur<bp){
+        if(GET_SUCC(cur) == NULL || GET_SUCC(cur)>bp)
+            break; // 이거 굳이 필요한가?
+        cur = GET_SUCC(cur);
+    }
+    GET_SUCC(bp) = GET_SUCC(cur);
+    GET_SUCC(cur) = bp;
+    GET_PRED(bp) = cur;
+    if(GET_SUCC(bp)!=NULL){
+        GET_PRED(GET_SUCC(bp)) = bp;
+    }
+}
 
 static void *coalesce(void *bp){
+    ////////////////////  implicit  /////////////////////
+    // size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    // size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+    // size_t size = GET_SIZE(HDRP(bp));
+
+    // //case 1
+    // if(prev_alloc && next_alloc){
+    //     return bp;
+    // }
+    // //case 2 
+    // else if(prev_alloc && !next_alloc){
+    //     size+=GET_SIZE(HDRP(NEXT_BLKP(bp)));
+    //     PUT(HDRP(bp),PACK(size,0));
+    //     PUT(FTRP(bp),PACK(size,0));
+    // } 
+    // //case 3
+    // else if(!prev_alloc && next_alloc){
+    //     size+=GET_SIZE(HDRP(PREV_BLKP(bp)));
+    //     PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
+    //     PUT(FTRP(bp),PACK(size,0));
+    //     bp = PREV_BLKP(bp);
+    // }
+    // //case 4
+    // else{
+    //     size+=GET_SIZE(HDRP(PREV_BLKP(bp)))+GET_SIZE(FTRP(NEXT_BLKP(bp)));
+    //     PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
+    //     PUT(FTRP(NEXT_BLKP(bp)),PACK(size,0));
+    //     bp = PREV_BLKP(bp);
+    // }
+    // return bp;
+    //////////////////////////////////////////////////////
+
+    ////////////////////implicit - LIFO///////////////////
+    // size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    // size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+    // size_t size = GET_SIZE(HDRP(bp));
+
+    // //case 1
+    // if(prev_alloc && next_alloc){
+    //     add_free_block(bp);
+    //     return bp;
+    // }
+    // //case 2 
+    // else if(prev_alloc && !next_alloc){
+    //     splice_free_block(NEXT_BLKP(bp));
+    //     size+=GET_SIZE(HDRP(NEXT_BLKP(bp)));
+    //     PUT(HDRP(bp),PACK(size,0));
+    //     PUT(FTRP(bp),PACK(size,0));
+    // } 
+    // //case 3
+    // else if(!prev_alloc && next_alloc){
+    //     splice_free_block(PREV_BLKP(bp));
+    //     size+=GET_SIZE(HDRP(PREV_BLKP(bp)));
+    //     PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
+    //     PUT(FTRP(bp),PACK(size,0));
+    //     bp = PREV_BLKP(bp);
+    // }
+    // //case 4
+    // else{
+    //     splice_free_block(PREV_BLKP(bp));
+    //     splice_free_block(NEXT_BLKP(bp));
+    //     size+=GET_SIZE(HDRP(PREV_BLKP(bp)))+GET_SIZE(FTRP(NEXT_BLKP(bp)));
+    //     PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
+    //     PUT(FTRP(NEXT_BLKP(bp)),PACK(size,0));
+    //     bp = PREV_BLKP(bp);
+    // }
+    // add_free_block(bp);
+    // return bp;
+    
+    /////////////////explicit - 주소정책/////////////////
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
 
     //case 1
     if(prev_alloc && next_alloc){
+        add_free_block(bp);
         return bp;
     }
     //case 2 
     else if(prev_alloc && !next_alloc){
+        splice_free_block(NEXT_BLKP(bp));
         size+=GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp),PACK(size,0));
         PUT(FTRP(bp),PACK(size,0));
+        add_free_block(bp);
     } 
     //case 3
     else if(!prev_alloc && next_alloc){
@@ -94,6 +208,7 @@ static void *coalesce(void *bp){
     }
     //case 4
     else{
+        splice_free_block(NEXT_BLKP(bp));
         size+=GET_SIZE(HDRP(PREV_BLKP(bp)))+GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)),PACK(size,0));
         PUT(FTRP(NEXT_BLKP(bp)),PACK(size,0));
@@ -125,41 +240,136 @@ static void *extend_heap(size_t words){
 
 int mm_init(void)
 {   
-    char *heap_listp;
-    // create the initial empty heap
-    if((heap_listp = mem_sbrk(4*WSIZE)) == (void*)-1) 
+    ///////////////////// implicit/////////////////////////
+    // char *heap_listp;
+    // // create the initial empty heap
+    // if((heap_listp = mem_sbrk(4*WSIZE)) == (void*)-1) 
+    //     return -1;
+    // PUT(heap_listp,0);
+    // PUT(heap_listp + (1 * WSIZE),PACK(DSIZE,1));
+    // PUT(heap_listp + (2 * WSIZE),PACK(DSIZE,1));
+    // PUT(heap_listp + (3 * WSIZE),PACK(0,1));
+    // heap_listp += 2 * WSIZE;
+
+    // // extend the empty heap with a free block of CHUNKSIZE bytes
+    // if(extend_heap(CHUNKSIZE/WSIZE) == NULL) 
+    //     return -1;
+    // return 0;
+    /////////////////////////////////////////////////////////
+
+    if((free_listp = mem_sbrk(8*WSIZE)) == (void*)-1) 
         return -1;
-    PUT(heap_listp,0);
-    PUT(heap_listp + (1 * WSIZE),PACK(DSIZE,1));
-    PUT(heap_listp + (2 * WSIZE),PACK(DSIZE,1));
-    PUT(heap_listp + (3 * WSIZE),PACK(0,1));
-    heap_listp += 2 * WSIZE;
+    PUT(free_listp,0);//정렬패딩
+    PUT(free_listp + (1 * WSIZE),PACK(DSIZE,1));//프롤로그 헤더
+    PUT(free_listp + (2 * WSIZE),PACK(DSIZE,1));//프롤로그 푸터
+    PUT(free_listp + (3 * WSIZE),PACK(4*WSIZE,0));// 첫가용 블록 헤더
+    PUT(free_listp + (4 * WSIZE),NULL); //이전 가용 블록 주소
+    PUT(free_listp + (5 * WSIZE),NULL); //이후 가용 블록 주소
+    PUT(free_listp + (6 * WSIZE),PACK(4*WSIZE,0));//첫가용 블록 푸터
+    PUT(free_listp + (7 * WSIZE),PACK(0,1)); //에필로그
+    free_listp += 4 * WSIZE;//블록의 prev 가리키고 있음
 
     // extend the empty heap with a free block of CHUNKSIZE bytes
     if(extend_heap(CHUNKSIZE/WSIZE) == NULL) 
         return -1;
     return 0;
+    
+
 }
 static void *find_fit(size_t asize){
-    void *bp = mem_heap_lo()+2*WSIZE;
+    /////////////////first-fit : implicit ///////////////////////
+    // void *bp = mem_heap_lo()+2*WSIZE;
+    // while(GET_SIZE(HDRP(bp))>0){
+    //     if(!GET_ALLOC(HDRP(bp)) && (asize<=GET_SIZE(HDRP(bp)))) 
+    //         return bp;
+    //     bp = NEXT_BLKP(bp);
+    // }
 
-    while(GET_SIZE(HDRP(bp))>0){
-        if(!GET_ALLOC(HDRP(bp)) && (asize<=GET_SIZE(HDRP(bp)))) 
+    //////////////////best-fit : implicit //////////////////////
+    // void *bp = mem_heap_lo()+2*WSIZE;
+    // void *best_fit = NULL;
+    // void *min_bp = (void *)-1;//제일 큰 크기
+
+    // while(GET_SIZE(HDRP(bp))>0){
+    //     if(!GET_ALLOC(HDRP(bp)) && (asize<=GET_SIZE(HDRP(bp)))){
+    //         if(GET_SIZE(HDRP(bp))<min_bp){
+    //             min_bp = GET_SIZE(HDRP(bp));
+    //             best_fit = bp;
+    //         }
+    //     }
+    //     bp = NEXT_BLKP(bp);
+    // }
+    // return best_fit;
+    //////////////////////////////////////////////////
+
+    //////////////explicit: first-fit/////////////////
+    void *bp = free_listp;
+    while(bp!=NULL){
+        if(asize<=GET_SIZE(HDRP(bp)))
             return bp;
-        bp = NEXT_BLKP(bp);
+        bp = GET_SUCC(bp);
     }
     return NULL;
 }
+
 static void place(void *bp,size_t asize){
+    /////////////implicit///////////////////
+    // size_t csize = GET_SIZE(HDRP(bp));
+
+    // if((csize - asize) >= (2*DSIZE)){
+    //     PUT(HDRP(bp),PACK(asize,1));
+    //     PUT(FTRP(bp),PACK(asize,1));
+
+    //     PUT(HDRP(NEXT_BLKP(bp)),PACK(csize-asize,0));
+    //     PUT(FTRP(NEXT_BLKP(bp)),PACK(csize-asize,0));
+    // }else{
+    //     PUT(HDRP(bp),PACK(csize,1));
+    //     PUT(FTRP(bp),PACK(csize,1));
+    // }
+    ////////////////////////////////////////
+
+    //////////////explicit: LIFO//////////////////
+    // splice_free_block(bp);
+    // size_t csize = GET_SIZE(HDRP(bp));
+
+    // if((csize - asize) >= (2*DSIZE)){
+    //     PUT(HDRP(bp),PACK(asize,1));
+    //     PUT(FTRP(bp),PACK(asize,1));
+
+    //     PUT(HDRP(NEXT_BLKP(bp)),PACK(csize-asize,0));
+    //     PUT(FTRP(NEXT_BLKP(bp)),PACK(csize-asize,0));
+    //     add_free_block(NEXT_BLKP(bp));
+    // }else{
+    //     PUT(HDRP(bp),PACK(csize,1));
+    //     PUT(FTRP(bp),PACK(csize,1));
+    // }
+    ///////////////////////////////////////////////
+
+    //////////////explicit:주소정책/////////////////
     size_t csize = GET_SIZE(HDRP(bp));
 
     if((csize - asize) >= (2*DSIZE)){
         PUT(HDRP(bp),PACK(asize,1));
         PUT(FTRP(bp),PACK(asize,1));
+        bp = NEXT_BLKP(bp);
+        PUT(HDRP(bp),PACK(csize-asize,0));
+        PUT(FTRP(bp),PACK(csize-asize,0));
 
-        PUT(HDRP(NEXT_BLKP(bp)),PACK(csize-asize,0));
-        PUT(FTRP(NEXT_BLKP(bp)),PACK(csize-asize,0));
+        GET_SUCC(bp)=GET_SUCC(PREV_BLKP(bp));
+
+        if(PREV_BLKP(bp) == free_listp){
+            free_listp = bp; //이미 할당 됐으니까 바꿔주자
+        }else{
+            GET_PRED(bp) = GET_PRED(PREV_BLKP(bp));
+            GET_SUCC(GET_PRED(PREV_BLKP(bp))) = bp;
+        }
+ 
+        if(GET_SUCC(bp) != NULL){
+            GET_PRED(GET_SUCC(bp)) = bp;
+        }
+
     }else{
+        splice_free_block(bp);
         PUT(HDRP(bp),PACK(csize,1));
         PUT(FTRP(bp),PACK(csize,1));
     }
@@ -212,19 +422,6 @@ void mm_free(void *bp)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    // void *oldptr = ptr;
-    // void *newptr;
-    // size_t copySize;
-    
-    // newptr = mm_malloc(size);
-    // if (newptr == NULL)
-    //   return NULL;
-    // copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    // if (size < copySize)
-    //   copySize = size;
-    // memcpy(newptr, oldptr, copySize);
-    // mm_free(oldptr);
-    // return newptr;
     if(ptr == NULL)
         return mm_malloc(size);
     if(size <= 0){
