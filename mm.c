@@ -78,7 +78,7 @@ static void splice_free_block(void* bp){
     if(bp == free_listp){
         free_listp = GET_SUCC(free_listp);
         return;
-    }// 이거 왱?
+    }
     GET_SUCC(GET_PRED(bp)) = GET_SUCC(bp);
     if(GET_SUCC(bp)!= NULL)
         GET_PRED(GET_SUCC(bp)) = GET_PRED(bp);
@@ -100,7 +100,7 @@ static void add_free_block(void* bp){
     }
     while(cur<bp){
         if(GET_SUCC(cur) == NULL || GET_SUCC(cur)>bp)
-            break; // 이거 굳이 필요한가?
+            break; 
         cur = GET_SUCC(cur);
     }
     GET_SUCC(bp) = GET_SUCC(cur);
@@ -284,6 +284,7 @@ static void *find_fit(size_t asize){
     //         return bp;
     //     bp = NEXT_BLKP(bp);
     // }
+    /////////////////////////////////////////////////////////////
 
     //////////////////best-fit : implicit //////////////////////
     // void *bp = mem_heap_lo()+2*WSIZE;
